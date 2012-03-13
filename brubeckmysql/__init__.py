@@ -2,6 +2,6 @@
 
 """Brubeck mysql integration."""
 
-version = "0.1.0"
-version_info = (0, 1, 0)
-__all__ = [ 'queryset']
+version = "0.0.9"
+version_info = (0, 0, 9)
+__all__ = [ 'querysets', 'base']
