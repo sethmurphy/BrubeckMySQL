@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 # Copyright 2012 Brooklyn Code Incorporated. See LICENSE.md for usage
 # the license can also be found at http://brooklyncode.com/opensource/LICENSE.md
-import pymysql
 import json
 import logging
 import os
 import imp
+
+import pymysql
+from pymysql import cursors
 from brubeck.queryset import AbstractQueryset
 from dictshield.fields import mongo as MongoFields
 from dictshield.fields import compound as CompoundFields
@@ -140,45 +142,35 @@ class MySqlQueryset(object):
            Defaults to returning a dict object, since that is what a DICT models and JSON need
         """
         logging.debug("query")
-
         conn = self.get_db_conn()
-
         sql = self.escape_sql(sql, args, conn)
-
         cursor = None
-
         if format == self.FORMAT_TUPLE:
+            logging.debug("tuple")
             cursor = conn.cursor()
         else:
-            cursor = conn.cursor(pymysql.cursors.DictCursor)
-            
-
+            logging.debug("dict")
+            cursor = conn.cursor(cursors.DictCursor)
         try:
             cursor.execute (sql)
         except:
             raise
-
         if fetch_one:
             return cursor.fetchone()
-
         return cursor.fetchall()
 
     def fetch(self, sql, args = None, format = FORMAT_DICT):
-        """gets just one item, the first returned
-        """
+        """gets just one item, the first returned"""
         logging.debug("fetch")
-
         return self.query(sql, args, format, True)
 
     def get_fields_list(self):
         """Creates a MySQL safe list of field names"""
         if self.fields == None:
             raise Exception("attribute fields not set in queryset!")
-
         # create a function to wrap and join our field names
         def wrap_and_join(field):
             return '`' + str(field) + '`'
-
         # map each item in the list and return us
         return ','.join(map(wrap_and_join, self.fields))
 
@@ -191,7 +183,6 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     """implement all our auto API functions mixin for MySql backed Queryset objects"""
 
     def __init__(self, settings, db_conn):
-
         super(MySqlApiQueryset, self).__init__(settings, db_conn)
         self.fields_muteable = None     # A list of field names that can be updated
 
@@ -203,7 +194,6 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         """
         if self.fields == None:
             raise Exception("attribute fields not set in queryset!")
-
         # create a function to wrap and join our field names
         def wrap_and_join(field):
             # if we are not a number field, wrap us in quotes
@@ -211,10 +201,8 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             if f != None and f._jsonschema_type() == 'string':
                 return "'%s'" % field
             return str(field)
-            
         def get_value(field):
             return getattr(shield, field)
-
         # map each item in the list and return us
         return (','.join(map(wrap_and_join, self.fields)), map(get_value, self.fields))
 
@@ -226,7 +214,6 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         """
         if self.fields == None:
             raise Exception("attribute fields not set in queryset!")
-
         return self._get_fields_equal_values_list(shield, self.fields)
 
     def get_update_fields_equal_values_list(self, shield):
@@ -237,7 +224,6 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         """
         if self.fields_muteable == None:
             raise Exception("attribute fields_muteable not set in queryset!")
-
         return self._get_fields_equal_values_list(shield, self.fields_muteable)
 
     def _dictshield_to_mysql_formatter(self, shield, field):
@@ -381,7 +367,6 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         elif isinstance(dictfield, CompoundFields.EmbeddedDocumentField):
             # A whole other entity
             raise Exception("EmbeddedDocumentField not Supported")
-
         return field_value
 
 
@@ -391,33 +376,27 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             1. The format string for the sql
             2. A list of the values themselves
         """
-
         # create a function to wrap and join our field names
         def wrap_and_join(field):
             return "%s=%s" % (field, self._dictshield_to_mysql_formatter(shield, field))
-            
         def get_value(field):
             return self._dictshield_to_mysql_value(shield, field)
-
         # map each item in the list and return us
         formatter = ','.join(map(wrap_and_join, fields))
         values = map(get_value, fields)
         return (formatter, values)
 
-
     ###
     ### Start functions nedded for auto API
     ###
-
     ## Create Functions
-        
+
     def create_one(self, shield, **kw):
         logging.debug("create_one")
         # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
         # check for our optional table_name argument
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
-        
         insert_info = self.get_insert_fields_equal_values_list(shield)
         update_info = self.get_update_fields_equal_values_list(shield)
         sql = """
@@ -426,20 +405,16 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             ON DUPLICATE KEY UPDATE
             %s
             """ % (table_name, insert_info[0], update_info[0])
-
         (affected_rows, inserted_id) = self.execute(sql, 
             insert_info[1] + update_info[1], is_insert_update = True )
-
         if affected_rows == 1:
             status = self.MSG_CREATED
         elif affected_rows == 2:
             status = self.MSG_UPDATED
-
         logging.debug("create_one (status, affected_rows): (%s, %s)" % (status, affected_rows))
         if inserted_id != None:
             shield.id = inserted_id
             logging.debug("inserted_id: %s)" % (inserted_id))
-
         return (status, shield)
 
     def create_many(self, shields, **kw):
@@ -458,13 +433,10 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
          # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
-
         iid = int(iid)  # id is always an int in MySQL
         item = self.fetch("SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_fields_list(), table_name), [iid])
-
         if item != None:
             return (self.MSG_OK, item)
-
         return (status, iid)
 
     def read_many(self, ids, **kw):
@@ -479,19 +451,15 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     def update_one(self, shield, **kw):
         logging.debug("update_one")
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
-
         # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
-
         sql = """
             UPDATE `%s` 
             SET %S
             WHERE id = %%s
         """ % (table_name, self.get_fields_equal_values_list(shield))
-
         if self.execute(sql, tuple(shield.id)):
             status = self.MSG_CREATED
-
         return (status, shield)
 
     def update_many(self, shields, **kw):
@@ -506,21 +474,16 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
-
         iid = int(iid)  # id is always an int in MySQL
-
         try:
             sql = """
                 DELETE FROM `%s`
                 WHERE id = %%s LIMIT 1'
             """ % (table_name, shield.id)
-            
             if self.execute(sql, tuple(shield.id)):
                 return (self.MSG_UPDATED, shield)
-
         except KeyError:
             raise FourOhFourException
-
         return (status, shield)
 
     def destroy_many(self, ids, **kw):
