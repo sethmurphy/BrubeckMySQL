@@ -11,8 +11,11 @@ from pymysql import cursors
 from brubeck.queryset import AbstractQueryset
 from dictshield.fields import mongo as MongoFields
 from dictshield.fields import compound as CompoundFields
+from base import create_db_conn_pool
 from base import create_db_conn
 import dictshield
+
+from gevent.queue import Queue
 
 ###
 ### All of our data interaction with any data store happens in a Queryset object
@@ -32,8 +35,15 @@ class MySqlQueryset(object):
     def __init__(self, settings, db_conn, **kw):
         """load our settings and do minimal config"""
         self.settings = settings
-        self.db_conn = db_conn
-        if self.db_conn == None:
+        if isinstance(db_conn, Queue):
+            self.db_pool = db_conn
+            self.db_conn = None
+        else:
+            self.db_conn = db_conn
+            self.db_pool = None
+
+
+        if self.db_pool == None and self.db_conn == None:
             logging.debug("None db_conn passed to queryset __init__t")
 
         # We will need to set these in the entity specific implmentation
@@ -41,36 +51,77 @@ class MySqlQueryset(object):
         self.table_name = None          # the name of the database table
         self.fields = None              # A list of field names
 
-    def set_db_conn(self, conn):
-        """set our db_connection"""
-        self.db_conn = conn
+    def set_db_pool(self, db_pool):
+        """set our db_pool (gevent.queue.Queue)"""
+        self.db_pool = db_pool
+
+    def set_db_conn(self, db_conn):
+        """set our db_conn"""
+        self.db_conn = db_conn
+
+    def get_db_pool(self):
+        """get our db_pool (gevent.queue.Queue)"""
+        return self.db_pool
 
     def get_db_conn(self):
         """Make sure we have a db connection, and return it"""
-        if self.db_conn == None:
+        db_conn = None
+        if self.db_conn == None and self.db_pool == None:
             self.init_db_conn()
-        else:
+        # get a connection        
+        if not self.db_pool == None:
+            # Will block until one becomes available
+            db_conn = self.db_pool.get()
+        elif not self.db_conn == None:
+            # not using pooling
+            db_conn = self.db_conn
+        if not db_conn == None:
             # try to avoid broken pipe error
-            self.db_conn.ping()
+            db_conn.ping()
+        return db_conn
 
-        return self.db_conn
+    def return_db_conn(self, db_conn):
+        """Puts a connection back in the pool.
+        Relies on gevent (db_pool is a Queue).
+        Does nothing if we have no db_pool.
+        """
+        if not self.db_pool == None:
+            self.db_pool.put_nowait(db_conn)
+
+    def init_db_pool(self, pool_size=10):
+        """create our MySQL connections pool.
+        Queue used for pool relies on gevent.
+        """
+        logging.debug("init_db_pool")
+        try:
+            # Only create it if it doesn't exist
+            if self.db_conn == None and self.db_pool == None:
+                logging.debug("need to create new db_pool")
+                self.db_pool = gevent.queue.Queue() 
+                for i in range(pool_size): 
+                    self.db_pool.put_nowait(create_db_conn(self.settings)) 
+            else:
+                logging.debug("NOT creating db_pool")
+        except Exception:
+            self.set_db_pool(None)
+            logging.debug("error creating db_pool")
+            raise
 
     def init_db_conn(self):
-        """create our MySQL connection"""
+        """create our MySQL connections"""
         logging.debug("init_db_conn")
         try:
             # Only create it if it doesn't exist
-            if self.db_conn == None:
-                logging.debug("n=ed to create new db_conn")
-                ## create our mySql connection
-                self.set_db_conn(create_db_conn(self.settings))
+            if self.db_conn == None and self.db_pool == None:
+                logging.debug("need to create new db_conn")
+                self.db_conn = create_db_conn(self.settings)
             else:
                 logging.debug("NOT creating db_conn")
-
         except Exception:
             self.set_db_conn(None)
             logging.debug("error creating db_conn")
             raise
+
 
     """ some MySQL helper functions to keep Queryset code cleaner
     """
@@ -78,39 +129,42 @@ class MySqlQueryset(object):
     def item_exists(self, table, id):
         """check if an item exists using an integer id"""
         logging.debug("item_exists")
-
-        sql = "SELECT count(*) FROM `%s`  WHERE id = %%s" % (table)
-        sql = self.escape_sql(sql, [id], self.db_conn)
-
-        cursor = self.db_conn.cursor()
-        cursor.execute (sql)    
-        row = cursor.fetchone ()
-        
+        db_conn = None
+        cursor = None
+        try:
+            db_conn = self.get_db_conn()
+            sql = "SELECT count(*) FROM `%s`  WHERE id = %%s" % (table)
+            sql = self.escape_sql(sql, [id], self.db_conn)
+            cursor = db_conn.cursor()
+            cursor.execute (sql)
+            row = cursor.fetchone ()
+        except:
+            raise
+        finally:
+            cursor.close()
+            self.return_db_conn(db_conn)
         if row == None or row[0] == 0:
             return False
-        
         return true
 
-    def escape_sql(self, sql, args, conn):
+    def escape_sql(self, sql, args, db_conn):
         # escape sql here so we can debug the real query string
         if args is not None:
             if isinstance(args, tuple) or isinstance(args, list):
-                escaped_args = tuple(conn.escape(arg) for arg in args)
+                escaped_args = tuple(db_conn.escape(arg) for arg in args)
             elif isinstance(args, dict):
-                escaped_args = dict((key, conn.escape(val)) for (key, val) in args.items())
+                escaped_args = dict((key, db_conn.escape(val)) for (key, val) in args.items())
             else:
                 #If it's not a dictionary let's try escaping it anyways.
                 #Worst case it will throw a Value error
-                escaped_args = conn.escape(args)        
+                escaped_args = db_conn.escape(args)        
             try:
                 sql = sql % escaped_args
             except:
                 pass
-
         logging.debug(sql)
-
         return sql
-        
+
     def execute(self, sql, args = None, is_insert = False, is_insert_update = False):
         """performs an insert, update or delete"""
         logging.debug("execute")
@@ -118,51 +172,60 @@ class MySqlQueryset(object):
         affected_rows = 0
         inserted_id = None
         
-        conn = self.get_db_conn()
-        cursor = conn.cursor()
-
-        sql = self.escape_sql(sql, args, conn)
-
+        db_conn = self.get_db_conn()
+        cursor = db_conn.cursor()
+        sql = self.escape_sql(sql, args, db_conn)
         try:
             affected_rows = cursor.execute (sql)
             if (is_insert or is_insert_update) and affected_rows == 1:
                 inserted_id = cursor.lastrowid    
-            conn.commit()
+            db_conn.commit()
         except:
-            conn.rollback()
+            db_conn.rollback()
             raise
-
+        finally:
+            cursor.close()
+            self.return_db_conn(db_conn)
         if is_insert or is_insert_update:
             return (affected_rows, inserted_id)
-
         return affected_rows
 
-    def query(self, sql, args = None, format = FORMAT_DICT, fetch_one = False):
+    def query(self, sql, args=None, format=FORMAT_DICT, fetch_one=False):
         """performs a query.
            Defaults to returning a dict object, since that is what a DICT models and JSON need
         """
         logging.debug("query")
-        conn = self.get_db_conn()
-        sql = self.escape_sql(sql, args, conn)
+        db_conn = self.get_db_conn()
+        sql = self.escape_sql(sql, args, db_conn)
         cursor = None
+        rows = None
         if format == self.FORMAT_TUPLE:
             logging.debug("tuple")
-            cursor = conn.cursor()
+            cursor = db_conn.cursor()
         else:
             logging.debug("dict")
-            cursor = conn.cursor(cursors.DictCursor)
+            cursor = db_conn.cursor(cursors.DictCursor)
         try:
-            cursor.execute (sql)
+            cursor.execute(sql)
+            if fetch_one == True:
+                rows = cursor.fetchone()
+            else:
+                rows = cursor.fetchall()
         except:
+            logging.debug("ERROR!!!!!!!!!")
             raise
-        if fetch_one:
-            return cursor.fetchone()
-        return cursor.fetchall()
+        finally:
+            cursor.close()
+            self.return_db_conn(db_conn)
+        return rows
 
-    def fetch(self, sql, args = None, format = FORMAT_DICT):
+    def fetch(self, sql, args=None, format=FORMAT_DICT):
         """gets just one item, the first returned"""
         logging.debug("fetch")
-        return self.query(sql, args, format, True)
+        row = self.query(sql, args, format, True)
+        if row == None or len(row) == 0:
+            return None
+        return  row
 
     def get_fields_list(self):
         """Creates a MySQL safe list of field names"""
@@ -182,8 +245,8 @@ class MySqlQueryset(object):
 class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     """implement all our auto API functions mixin for MySql backed Queryset objects"""
 
-    def __init__(self, settings, db_conn):
-        super(MySqlApiQueryset, self).__init__(settings, db_conn)
+    def __init__(self, settings, db_pool):
+        super(MySqlApiQueryset, self).__init__(settings, db_pool)
         self.fields_muteable = None     # A list of field names that can be updated
 
 
