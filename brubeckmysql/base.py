@@ -43,3 +43,29 @@ def create_db_conn(settings):
         logging.debug("error creating db_conn")
         raise
     return db_conn
+
+def create_db_conn_pool(settings, pool_size=10):
+    """create our MySQL connection"""
+    logging.debug("create_db_conn_pool")
+    self.db_conn = gevent.queue.Queue()
+    for i in range(pool_size): 
+        db_conn = None
+        try:
+            # Only create it if it doesn't exist
+            # logging.debug("creating db_conn")
+            ## create our mySql connection
+            db_conn = pymysql.connect(
+                host    =settings["CONNECTION"]["HOST"],
+                port    =settings["CONNECTION"]["PORT"],
+                user    =settings["CONNECTION"]["USER"],
+                passwd  =settings["CONNECTION"]["PASSWORD"],
+                db      =settings["CONNECTION"]["DATABASE"]
+            );
+            logging.debug("created db_conn %s" % i)
+            self.db_conn.put_nowait(db_conn) 
+            logging.debug("added db_conn %s to pool" % i)
+        except Exception:
+            logging.debug("error creating db_conn")
+            raise
+
+    return db_pool
