@@ -7,6 +7,7 @@ import os
 import imp
 
 import pymysql
+from pymysql.connections import Connection
 from pymysql import cursors
 from brubeck.queryset import AbstractQueryset
 from dictshield.fields import mongo as MongoFields
@@ -75,9 +76,37 @@ class MySqlQueryset(object):
         elif not self.db_conn == None:
             # not using pooling
             db_conn = self.db_conn
+
         if not db_conn == None:
             # try to avoid broken pipe error
-            db_conn.ping()
+            try:
+                db_conn.ping()
+            except:
+                # if we have any problems just give us a fresh connection
+                logging.debug("Error pinging, building new connection")
+                # first kill our old connection
+                if isinstance(db_conn, Connection):
+                    try:
+                        db_conn.close()
+                    except:
+                        pass
+                db_conn = None
+                try:
+                    ## create our mySql connection
+                    ## this connection just takes 
+                    ## the old connections place in the queue
+                    db_conn = pymysql.connect(
+                        host        =self.settings["CONNECTION"]["HOST"],
+                        port        =self.settings["CONNECTION"]["PORT"],
+                        user        =self.settings["CONNECTION"]["USER"],
+                        passwd      =self.settings["CONNECTION"]["PASSWORD"],
+                        db          =self.settings["CONNECTION"]["DATABASE"],
+                    );
+                    logging.debug("created db_conn to replace bad")
+                    pass
+                except Exception:
+                    logging.debug("error creating db_conn to replace bad")
+                    raise
         return db_conn
 
     def return_db_conn(self, db_conn):
@@ -208,14 +237,18 @@ class MySqlQueryset(object):
         try:
             cursor.execute(sql)
             if fetch_one == True:
+                logging.debug("fetch_one")
                 rows = cursor.fetchone()
             else:
+                logging.debug("fetch_all")
                 rows = cursor.fetchall()
+            logging.debug("db_conn:%s" % db_conn)
         except:
             logging.debug("ERROR!!!!!!!!!")
             raise
         finally:
             cursor.close()
+            db_conn.commit()
             self.return_db_conn(db_conn)
         return rows
 
@@ -497,7 +530,9 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
          # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
         iid = int(iid)  # id is always an int in MySQL
-        item = self.fetch("SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_fields_list(), table_name), [iid])
+        sql = "SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_fields_list(), table_name)
+        #logging.debug("sql: %s" % sql)
+        item = self.fetch(sql, [iid])
         if item != None:
             return (self.MSG_OK, item)
         return (status, iid)
