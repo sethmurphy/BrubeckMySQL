@@ -3,7 +3,7 @@
 from distutils.core import setup
  
 setup(name='brubeck-mysql',
-      version='0.0.9',
+      version='0.1.0',
       description='Brubeck module for MySQL querysets',
       author='Seth Murphy',
       author_email='seth@brooklyncode.com',
