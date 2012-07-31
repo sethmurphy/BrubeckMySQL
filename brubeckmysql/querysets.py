@@ -576,13 +576,13 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         try:
             sql = """
                 DELETE FROM `%s`
-                WHERE id = %%s LIMIT 1'
-            """ % (table_name, shield.id)
-            if self.execute(sql, tuple(shield.id)):
-                return (self.MSG_UPDATED, shield)
+                WHERE id = %%s LIMIT 1
+            """ % (table_name)
+            if self.execute(sql, [iid]):
+                return (self.MSG_UPDATED, iid)
         except KeyError:
             raise FourOhFourException
-        return (status, shield)
+        return (status, iid)
 
     def destroy_many(self, ids, **kw):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
