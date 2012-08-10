@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import imp
+import uuid
 
 import pymysql
 from pymysql.connections import Connection
@@ -495,12 +496,18 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         insert_info = self.get_insert_fields_equal_values_list(shield)
         update_info = self.get_update_fields_equal_values_list(shield)
-        sql = """
-            INSERT INTO `%s` 
-            set %s 
-            ON DUPLICATE KEY UPDATE
-            %s
-            """ % (table_name, insert_info[0], update_info[0])
+        if update_info[0] == '':
+            sql = """
+                INSERT INTO `%s` 
+                set %s 
+                """ % (table_name, insert_info[0])
+        else:
+            sql = """
+                INSERT INTO `%s` 
+                set %s 
+                ON DUPLICATE KEY UPDATE
+                %s
+                """ % (table_name, insert_info[0], update_info[0])
         (affected_rows, inserted_id) = self.execute(sql, 
             insert_info[1] + update_info[1], is_insert_update = True )
         if affected_rows == 1:
