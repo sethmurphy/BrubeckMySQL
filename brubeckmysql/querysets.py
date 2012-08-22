@@ -34,6 +34,8 @@ class MySqlQueryset(object):
     FORMAT_DICT  = 1
     FORMAT_DICTSHIELD  = 2
 
+    MSG_NOCHANGES  = 'NO CHANGES'
+
     def __init__(self, settings, db_conn, **kw):
         """load our settings and do minimal config"""
         self.settings = settings
@@ -164,18 +166,19 @@ class MySqlQueryset(object):
         try:
             db_conn = self.get_db_conn()
             sql = "SELECT count(*) FROM `%s`  WHERE id = %%s" % (table)
-            sql = self.escape_sql(sql, [id], self.db_conn)
+            sql = self.escape_sql(sql, [id], db_conn)
             cursor = db_conn.cursor()
             cursor.execute (sql)
             row = cursor.fetchone ()
         except:
             raise
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
             self.return_db_conn(db_conn)
         if row == None or row[0] == 0:
             return False
-        return true
+        return True
 
     def escape_sql(self, sql, args, db_conn):
         # escape sql here so we can debug the real query string
@@ -214,7 +217,8 @@ class MySqlQueryset(object):
             db_conn.rollback()
             raise
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
             self.return_db_conn(db_conn)
         if is_insert or is_insert_update:
             return (affected_rows, inserted_id)
@@ -248,8 +252,10 @@ class MySqlQueryset(object):
             logging.debug("ERROR!!!!!!!!!")
             raise
         finally:
-            cursor.close()
-            db_conn.commit()
+            if cursor is not None:
+                cursor.close()
+            if db_conn is not None:
+                db_conn.commit()
             self.return_db_conn(db_conn)
         return rows
 
@@ -332,6 +338,11 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         (SEE: https://github.com/j2labs/dictshield/tree/master/docs)
         """
         string_formatter = '%s' # this is used for everything (% escapes %)
+        logging.debug("shield._fields %s" % shield._fields)
+        logging.debug("field %s" % field)
+        if field not in shield._fields and field == 'id':
+            return string_formatter;
+
         dictfield = shield._fields[field]
         #logging.debug("dictfield for %s" % field)
         #logging.debug(dictfield)
@@ -403,7 +414,13 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         Complex or container types are not supported.
         """
         field_value = ''
+        logging.debug("shield._fields %s" % shield._fields)
+        logging.debug("field %s" % field)
+        if field not in shield._fields:
+            return None;
+
         dictfield = shield._fields[field]
+
         if isinstance(dictfield, dictshield.fields.StringField):
             # A unicode string
             field_value = getattr(shield, field)
@@ -514,6 +531,11 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             status = self.MSG_CREATED
         elif affected_rows == 2:
             status = self.MSG_UPDATED
+        else:
+            # we may have executed a query with no changes needed, so check if the item exists
+            if self.item_exists(table_name, shield.id):
+                status = self.MSG_NOCHANGES
+
         logging.debug("create_one (status, affected_rows): (%s, %s)" % (status, affected_rows))
         if inserted_id != None:
             shield.id = inserted_id
