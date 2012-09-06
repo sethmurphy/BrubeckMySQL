@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Copyright 2012 Brooklyn Code Incorporated. See LICENSE.md for usage
 # the license can also be found at http://brooklyncode.com/opensource/LICENSE.md
 
@@ -30,13 +32,30 @@ def create_db_conn(settings):
         # Only create it if it doesn't exist
         # logging.debug("creating db_conn")
         ## create our mySql connection
+        coll = settings["CONNECTION"]["COLLATION"]
         db_conn = pymysql.connect(
-            host    =settings["CONNECTION"]["HOST"],
-            port    =settings["CONNECTION"]["PORT"],
-            user    =settings["CONNECTION"]["USER"],
-            passwd  =settings["CONNECTION"]["PASSWORD"],
-            db      =settings["CONNECTION"]["DATABASE"]
+            host        =settings["CONNECTION"]["HOST"],
+            port        =settings["CONNECTION"]["PORT"],
+            user        =settings["CONNECTION"]["USER"],
+            passwd      =settings["CONNECTION"]["PASSWORD"],
+            db          =settings["CONNECTION"]["DATABASE"],
+            charset     =settings["CONNECTION"]["COLLATION"],
+            use_unicode = True if coll == "utf8" else False,
         );
+
+        if settings["CONNECTION"]["COLLATION"] == "utf8":
+            cursor = None
+            try:
+                db_conn.set_charset(coll)
+                cursor = db_conn.cursor()
+                cursor.execute('SET NAMES %s;' % coll)
+                cursor.execute('SET CHARACTER SET %s;' % coll)
+                cursor.execute('SET character_set_connection=%s;' % coll)
+            finally:
+                if cursor is not None:
+                    cursor.close()
+                    db_conn.commit()
+                    
         logging.debug("created db_conn")
 
     except Exception:

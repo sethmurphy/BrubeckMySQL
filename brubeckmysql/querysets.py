@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Copyright 2012 Brooklyn Code Incorporated. See LICENSE.md for usage
 # the license can also be found at http://brooklyncode.com/opensource/LICENSE.md
 import json
@@ -18,6 +19,37 @@ from base import create_db_conn
 import dictshield
 
 from gevent.queue import Queue
+
+import re, htmlentitydefs
+
+##
+# Removes HTML or XML character references and entities from a text string.
+#
+# @param text The HTML (or XML) source text.
+# @return The plain text, as a Unicode string, if necessary.
+
+
+def unescape(text):
+    """Thanks http://effbot.org/zone/re-sub.htm#unescape-html"""
+    def fixup(m):
+        text = m.group(0)
+        if text[:2] == "&#":
+            # character reference
+            try:
+                if text[:3] == "&#x":
+                    return unichr(int(text[3:-1], 16))
+                else:
+                    return unichr(int(text[2:-1]))
+            except ValueError:
+                pass
+        else:
+            # named entity
+            try:
+                text = unichr(htmlentitydefs.name2codepoint[text[1:-1]])
+            except KeyError:
+                pass
+        return text # leave as is
+    return re.sub("&#?\w+;", fixup, text)
 
 ###
 ### All of our data interaction with any data store happens in a Queryset object
@@ -182,6 +214,7 @@ class MySqlQueryset(object):
 
     def escape_sql(self, sql, args, db_conn):
         # escape sql here so we can debug the real query string
+        logging.debug("escape_sql args: %s" % args)
         if args is not None:
             if isinstance(args, tuple) or isinstance(args, list):
                 escaped_args = tuple(db_conn.escape(arg) for arg in args)
@@ -190,10 +223,11 @@ class MySqlQueryset(object):
             else:
                 #If it's not a dictionary let's try escaping it anyways.
                 #Worst case it will throw a Value error
-                escaped_args = db_conn.escape(args)        
+                escaped_args = db_conn.escape(args)
             try:
                 sql = sql % escaped_args
             except:
+                raise
                 pass
         logging.debug(sql)
         return sql
@@ -207,7 +241,11 @@ class MySqlQueryset(object):
         
         db_conn = self.get_db_conn()
         cursor = db_conn.cursor()
+        logging.debug("execute args: %s" % args)
         sql = self.escape_sql(sql, args, db_conn)
+        
+        logging.debug("execute: %s" % sql)
+        
         try:
             affected_rows = cursor.execute (sql)
             if (is_insert or is_insert_update) and affected_rows == 1:
@@ -302,10 +340,10 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             # if we are not a number field, wrap us in quotes
             f = getattr(shield, field)
             if f != None and f._jsonschema_type() == 'string':
-                return "'%s'" % field
+                return u"'%s'" % field
             return str(field)
         def get_value(field):
-            return getattr(shield, field)
+            return getattr(shield, field).encode('utf8')
         # map each item in the list and return us
         return (','.join(map(wrap_and_join, self.fields)), map(get_value, self.fields))
 
@@ -337,9 +375,9 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         Complex or container types are not supported.
         (SEE: https://github.com/j2labs/dictshield/tree/master/docs)
         """
-        string_formatter = '%s' # this is used for everything (% escapes %)
-        logging.debug("shield._fields %s" % shield._fields)
-        logging.debug("field %s" % field)
+        string_formatter = u'%s' # this is used for everything (% escapes %)
+        #logging.debug("shield._fields %s" % shield._fields)
+        #logging.debug("field %s" % field)
         if field not in shield._fields and field == 'id':
             return string_formatter;
 
@@ -413,9 +451,9 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         At the moment it is limited to simple types.
         Complex or container types are not supported.
         """
-        field_value = ''
-        logging.debug("shield._fields %s" % shield._fields)
-        logging.debug("field %s" % field)
+        field_value = u''
+        #logging.debug("shield._fields %s" % shield._fields)
+        #logging.debug("field %s" % field)
         if field not in shield._fields:
             return None;
 
@@ -492,11 +530,14 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         """
         # create a function to wrap and join our field names
         def wrap_and_join(field):
-            return "%s=%s" % (field, self._dictshield_to_mysql_formatter(shield, field))
+            return u"%s=%s" % (field, self._dictshield_to_mysql_formatter(shield, field))
         def get_value(field):
-            return self._dictshield_to_mysql_value(shield, field)
+            val = self._dictshield_to_mysql_value(shield, field)
+            #if isinstance(val, unicode):
+            #    val = val.encode('utf8')
+            return val
         # map each item in the list and return us
-        formatter = ','.join(map(wrap_and_join, fields))
+        formatter = u','.join(map(wrap_and_join, fields))
         values = map(get_value, fields)
         return (formatter, values)
 
@@ -514,12 +555,12 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         insert_info = self.get_insert_fields_equal_values_list(shield)
         update_info = self.get_update_fields_equal_values_list(shield)
         if update_info[0] == '':
-            sql = """
+            sql = u"""
                 INSERT INTO `%s` 
                 set %s 
                 """ % (table_name, insert_info[0])
         else:
-            sql = """
+            sql = u"""
                 INSERT INTO `%s` 
                 set %s 
                 ON DUPLICATE KEY UPDATE
@@ -551,7 +592,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
 
     def read_all(self, **kw):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
-        return [(self.MSG_OK, datum) for datum in self.query("SELECT %s FROM `%s`" % (self.get_fields_list(), table_name))]
+        return [(self.MSG_OK, datum) for datum in self.query(u"SELECT %s FROM `%s`" % (self.get_fields_list(), table_name))]
 
     def read_one(self, iid, **kw):
         logging.debug("read_one")
@@ -559,7 +600,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
          # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
         iid = int(iid)  # id is always an int in MySQL
-        sql = "SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_fields_list(), table_name)
+        sql = u"SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_fields_list(), table_name)
         #logging.debug("sql: %s" % sql)
         item = self.fetch(sql, [iid])
         if item != None:
@@ -580,7 +621,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
-        sql = """
+        sql = u"""
             UPDATE `%s` 
             SET %S
             WHERE id = %%s
@@ -603,7 +644,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         status = self.MSG_FAILED 
         iid = int(iid)  # id is always an int in MySQL
         try:
-            sql = """
+            sql = u"""
                 DELETE FROM `%s`
                 WHERE id = %%s LIMIT 1
             """ % (table_name)
