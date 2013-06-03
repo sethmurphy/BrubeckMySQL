@@ -17,7 +17,7 @@ from dictshield.fields import compound as CompoundFields
 from base import create_db_conn_pool
 from base import create_db_conn
 import dictshield
-
+import schematics
 from gevent.queue import Queue
 
 import re, htmlentitydefs
@@ -68,7 +68,7 @@ class MySqlQueryset(object):
 
     MSG_NOCHANGES  = 'NO CHANGES'
 
-    def __init__(self, settings, db_conn, **kw):
+    def __init__(self, settings, db_conn, tag, **kw):
         """load our settings and do minimal config"""
         self.settings = settings
         if isinstance(db_conn, Queue):
@@ -86,6 +86,20 @@ class MySqlQueryset(object):
         # Once DictShield has more meta data, this may not be necessary anymore        
         self.table_name = None          # the name of the database table
         self.fields = None              # A list of field names
+        if tag is None:
+            # We will need to set these in the entity specific implementation
+            # Once DictShield has more meta data, this may not be necessary anymore
+            self.table_name = None
+            self.fields = None
+            self.fields_muteable = None
+        else:
+            self.table_name = self.settings["TABLES"][tag]["TABLE_NAME"]
+            self.fields = self.settings["TABLES"][tag]["FIELDS"]
+            self.fields_muteable = self.settings["TABLES"][tag]["FIELDS_MUTEABLE"]
+
+
+
+
 
     def set_db_pool(self, db_pool):
         """set our db_pool (gevent.queue.Queue)"""
@@ -131,11 +145,11 @@ class MySqlQueryset(object):
                     ## this connection just takes 
                     ## the old connections place in the queue
                     db_conn = pymysql.connect(
-                        host        =self.settings["CONNECTION"]["HOST"],
-                        port        =self.settings["CONNECTION"]["PORT"],
-                        user        =self.settings["CONNECTION"]["USER"],
-                        passwd      =self.settings["CONNECTION"]["PASSWORD"],
-                        db          =self.settings["CONNECTION"]["DATABASE"],
+                        host = self.settings["CONNECTION"]["HOST"],
+                        port = self.settings["CONNECTION"]["PORT"],
+                        user = self.settings["CONNECTION"]["USER"],
+                        passwd = self.settings["CONNECTION"]["PASSWORD"],
+                        db = self.settings["CONNECTION"]["DATABASE"],
                     );
                     logging.debug("created db_conn to replace bad")
                     pass
@@ -214,6 +228,7 @@ class MySqlQueryset(object):
 
     def escape_sql(self, sql, args, db_conn):
         # escape sql here so we can debug the real query string
+        logging.debug("escape_sql sql: %s" % sql)
         logging.debug("escape_sql args: %s" % args)
         if args is not None:
             if isinstance(args, tuple) or isinstance(args, list):
@@ -305,13 +320,21 @@ class MySqlQueryset(object):
             return None
         return  row
 
-    def get_fields_list(self):
+    def get_fields_list(self, alias = None):
         """Creates a MySQL safe list of field names"""
         if self.fields == None:
             raise Exception("attribute fields not set in queryset!")
+
+        if alias is not None:
+            alias = '`%s`.' % alias
+        else:
+            alias = ''
+
         # create a function to wrap and join our field names
         def wrap_and_join(field):
-            return '`' + str(field) + '`'
+            return '%s`%s`' % (alias,str(field))
+
+            
         # map each item in the list and return us
         return ','.join(map(wrap_and_join, self.fields))
 
@@ -323,10 +346,31 @@ class MySqlQueryset(object):
 class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     """implement all our auto API functions mixin for MySql backed Queryset objects"""
 
-    def __init__(self, settings, db_pool):
-        super(MySqlApiQueryset, self).__init__(settings, db_pool)
+    def __init__(self, settings, db_pool, table_tag = None):
+        super(MySqlApiQueryset, self).__init__(settings, db_pool, table_tag)
         self.fields_muteable = None     # A list of field names that can be updated
 
+        if table_tag is not None:
+            self.table_name = self.settings["TABLES"][table_tag]["TABLE_NAME"]
+            self.fields = self.settings["TABLES"][table_tag]["FIELDS"]
+            self.fields_muteable = self.settings["TABLES"][table_tag]["FIELDS_MUTEABLE"]
+        
+    def dictListToDictShieldList(self, dict_items):
+        items = []
+        for dict_item in dict_items:
+            items.append(self.DictToDictShield(dict_item))
+        return items
+
+    def resultsTupleToDictShieldList(self, result_tuples):
+        items = []
+        for result_tuple in result_tuples:
+            if result_tuple[0] == self.MSG_OK:
+                items.append(self.DictToDictShield(result_tuple[1]))
+        return items
+
+    def DictToDictShield(self, dict_value):
+        """Take a CostTypeQuerySet result dict and return a CostType DictShield"""
+        raise NotImplemented("DictToDictShield(self, dict_value) needed in MySqlApiQueryset.")
 
     def get_values_list(self, shield):
         """Creates a MySQL safe list of field values
@@ -381,69 +425,69 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         if field not in shield._fields and field == 'id':
             return string_formatter;
 
-        dictfield = shield._fields[field]
+        myfield = shield._fields[field]
         #logging.debug("dictfield for %s" % field)
         #logging.debug(dictfield)
-        if isinstance(dictfield, dictshield.fields.StringField):
+        if isinstance(myfield, schematics.types.StringType):
             # A unicode string
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.URLField):
+        elif isinstance(myfield, schematics.types.URLType):
             # A valid URL
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.EmailField):
+        elif isinstance(myfield, schematics.types.EmailType):
             # A valid email address
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.UUIDField):
+        elif isinstance(myfield, schematics.types.UUIDType):
             # A valid UUID value, optionally auto-populates empty values with new UUIDs
             return string_formatter
-        elif isinstance(dictfield, MongoFields.ObjectIdField):
+        elif isinstance(myfield, MongoFields.ObjectIdField):
             # Wraps a MongoDB "BSON" ObjectId
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.NumberField):
+        elif isinstance(myfield, schematics.types.NumberType):
             # Any number (the parent of all the other numeric fields)
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.IntField):
+        elif isinstance(myfield, schematics.types.IntType):
             # An integer
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.LongField):
+        elif isinstance(myfield, schematics.types.LongType):
             # A long
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.FloatField):
+        elif isinstance(myfield, schematics.types.FloatType):
             # A float
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.DecimalField):
+        elif isinstance(myfield, schematics.types.DecimalType):
             # A fixed-point decimal number
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.MD5Field):
+        elif isinstance(myfield, schematics.types.MD5Type):
             # An MD5 hash
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.SHA1Field):
+        elif isinstance(myfield, schematics.types.SHA1Type):
             # An SHA1 hash
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.BooleanField):
+        elif isinstance(myfield, schematics.types.BooleanType):
             # A boolean
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.DateTimeField):
+        elif isinstance(myfield, schematics.types.DateTimeType):
             # A datetime
             return string_formatter
-        elif isinstance(dictfield, dictshield.fields.GeoPointField):
+        elif isinstance(myfield, schematics.types.GeoPointType):
             # A geo-value of the form x, y (latitude, longitude)
             raise Exception("GeoPointField not Supported")
-        elif isinstance(dictfield, CompoundFields.ListField):
+        elif isinstance(myfield, CompoundFields.ListType):
             # Wraps a standard field, so multiple instances of the field can be used
             raise Exception("ListField not Supported")
-        elif isinstance(dictfield, CompoundFields.SortedListField):
+        elif isinstance(myfield, CompoundFields.SortedListType):
             # A ListField which sorts the list before saving, so list is always sorted
             raise Exception("SortedListField not Supported")
-        elif isinstance(dictfield, CompoundFields.DictField):
+        elif isinstance(myfield, CompoundFields.DictType):
             # Wraps a standard Python dictionary
             raise Exception("DictField not Supported")
-        elif isinstance(dictfield, CompoundFields.MultiValueDictField):
+        elif isinstance(myfield, CompoundFields.MultiValueDictType):
             # Wraps Django's implementation of a MultiValueDict.
             raise Exception("MultiValueDictField not Supported")
-        elif isinstance(dictfield, CompoundFields.EmbeddedDocumentField):
+        elif isinstance(myfield, CompoundFields.ModelType):
             # A whole other entity
-            raise Exception("EmbeddedDocumentField not Supported")
+            raise Exception("ModelType not Supported")
 
     def _dictshield_to_mysql_value(self, shield, field):
         """
@@ -457,66 +501,66 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         if field not in shield._fields:
             return None;
 
-        dictfield = shield._fields[field]
+        myfield = shield._fields[field]
 
-        if isinstance(dictfield, dictshield.fields.StringField):
+        if isinstance(myfield, schematics.types.StringType):
             # A unicode string
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.URLField):
+        elif isinstance(myfield, schematics.types.URLType):
             # A valid URL
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.EmailField):
+        elif isinstance(myfield, schematics.types.EmailType):
             # A valid email address
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.UUIDField):
+        elif isinstance(myfield, schematics.types.UUIDType):
             # A valid UUID value, optionally auto-populates empty values with new UUIDs
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, MongoFields.ObjectIdField):
+        elif isinstance(myfield, MongoFields.ObjectIdField):
             # Wraps a MongoDB "BSON" ObjectId
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.NumberField):
+        elif isinstance(myfield, schematics.types.NumberType):
             # Any number (the parent of all the other numeric fields)
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.IntField):
+        elif isinstance(myfield, schematics.types.IntType):
             # An integer
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.LongField):
+        elif isinstance(myfield, schematics.types.LongType):
             # A long
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.FloatField):
+        elif isinstance(myfield, schematics.types.FloatType):
             # A float
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.DecimalField):
+        elif isinstance(myfield, schematics.types.DecimalType):
             # A fixed-point decimal number
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.MD5Field):
+        elif isinstance(myfield, schematics.types.MD5Type):
             # An MD5 hash
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.SHA1Field):
+        elif isinstance(myfield, schematics.types.SHA1Type):
             # An SHA1 hash
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.BooleanField):
+        elif isinstance(myfield, schematics.types.BooleanType):
             # A boolean
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.DateTimeField):
+        elif isinstance(myfield, schematics.types.DateTimeType):
             # A datetime
             field_value = getattr(shield, field)
-        elif isinstance(dictfield, dictshield.fields.GeoPointField):
+        elif isinstance(myfield, schematics.types.GeoPointType):
             # A geo-value of the form x, y (latitude, longitude)
             raise Exception("GeoPointField not Supported")
-        elif isinstance(dictfield, CompoundFields.ListField):
+        elif isinstance(myfield, CompoundFields.ListType):
             # Wraps a standard field, so multiple instances of the field can be used
             raise Exception("ListField not Supported")
-        elif isinstance(dictfield, CompoundFields.SortedListField):
+        elif isinstance(myfield, CompoundFields.SortedListType):
             # A ListField which sorts the list before saving, so list is always sorted
             raise Exception("SortedListField not Supported")
-        elif isinstance(dictfield, CompoundFields.DictField):
+        elif isinstance(myfield, CompoundFields.DictType):
             # Wraps a standard Python dictionary
             raise Exception("DictField not Supported")
-        elif isinstance(dictfield, CompoundFields.MultiValueDictField):
+        elif isinstance(myfield, CompoundFields.MultiValueDictType):
             # Wraps Django's implementation of a MultiValueDict.
             raise Exception("MultiValueDictField not Supported")
-        elif isinstance(dictfield, CompoundFields.EmbeddedDocumentField):
+        elif isinstance(myfield, CompoundFields.EmbeddedDocumentType):
             # A whole other entity
             raise Exception("EmbeddedDocumentField not Supported")
         return field_value
@@ -547,7 +591,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     ## Create Functions
 
     def create_one(self, shield, **kw):
-        logging.debug("create_one")
+        logging.debug("MySqlApiQueryset create_one")
         # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
         # check for our optional table_name argument
@@ -566,6 +610,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
                 ON DUPLICATE KEY UPDATE
                 %s
                 """ % (table_name, insert_info[0], update_info[0])
+        logging.debug("MySqlApiQueryset create_one sql: %s" % sql)
         (affected_rows, inserted_id) = self.execute(sql, 
             insert_info[1] + update_info[1], is_insert_update = True )
         if affected_rows == 1:
@@ -577,7 +622,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             if self.item_exists(table_name, shield.id):
                 status = self.MSG_NOCHANGES
 
-        logging.debug("create_one (status, affected_rows): (%s, %s)" % (status, affected_rows))
+        logging.debug("MySqlApiQueryset create_one (status, affected_rows): (%s, %s)" % (status, affected_rows))
         if inserted_id != None:
             shield.id = inserted_id
             logging.debug("inserted_id: %s)" % (inserted_id))
@@ -595,7 +640,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         return [(self.MSG_OK, datum) for datum in self.query(u"SELECT %s FROM `%s`" % (self.get_fields_list(), table_name))]
 
     def read_one(self, iid, **kw):
-        logging.debug("read_one")
+        logging.debug("MySqlApiQueryset read_one")
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
          # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
@@ -617,7 +662,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     ## Update Functions
 
     def update_one(self, shield, **kw):
-        logging.debug("update_one")
+        logging.debug("MySqlApiQueryset update_one")
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
@@ -638,7 +683,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     ## Destroy Functions
 
     def destroy_one(self, iid, **kw):
-        logging.debug("destroy_one")
+        logging.debug("MySqlApiQueryset destroy_one")
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
