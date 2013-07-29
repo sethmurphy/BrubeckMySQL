@@ -12,8 +12,8 @@ import pymysql
 from pymysql.connections import Connection
 from pymysql import cursors
 from brubeck.queryset import AbstractQueryset
-from dictshield.fields import mongo as MongoFields
-from dictshield.fields import compound as CompoundFields
+from schematics.types import compound as CompoundFields
+from schematics.types import mongo as MongoFields
 from base import create_db_conn_pool
 from base import create_db_conn
 import dictshield
@@ -440,7 +440,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         elif isinstance(myfield, schematics.types.UUIDType):
             # A valid UUID value, optionally auto-populates empty values with new UUIDs
             return string_formatter
-        elif isinstance(myfield, MongoFields.ObjectIdField):
+        elif isinstance(myfield, MongoFields.ObjectIdType):
             # Wraps a MongoDB "BSON" ObjectId
             return string_formatter
         elif isinstance(myfield, schematics.types.NumberType):
@@ -515,7 +515,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         elif isinstance(myfield, schematics.types.UUIDType):
             # A valid UUID value, optionally auto-populates empty values with new UUIDs
             field_value = getattr(shield, field)
-        elif isinstance(myfield, MongoFields.ObjectIdField):
+        elif isinstance(myfield, MongoFields.ObjectIdType):
             # Wraps a MongoDB "BSON" ObjectId
             field_value = getattr(shield, field)
         elif isinstance(myfield, schematics.types.NumberType):
@@ -560,9 +560,6 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         elif isinstance(myfield, CompoundFields.MultiValueDictType):
             # Wraps Django's implementation of a MultiValueDict.
             raise Exception("MultiValueDictField not Supported")
-        elif isinstance(myfield, CompoundFields.EmbeddedDocumentType):
-            # A whole other entity
-            raise Exception("EmbeddedDocumentField not Supported")
         return field_value
 
 

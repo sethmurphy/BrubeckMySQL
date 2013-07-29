@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: brubeck-mysql
+Version: 0.1.6
+Summary: Brubeck module for MySQL querysets
+Home-page: http://github.com/sethmurphy/BrubeckMySQL
+Author: Seth Murphy
+Author-email: seth@brooklyncode.com
+License: UNKNOWN
+Description: UNKNOWN
+Platform: UNKNOWN

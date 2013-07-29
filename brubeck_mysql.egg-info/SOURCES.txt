@@ -1,0 +1,8 @@
+setup.py
+brubeck_mysql.egg-info/PKG-INFO
+brubeck_mysql.egg-info/SOURCES.txt
+brubeck_mysql.egg-info/dependency_links.txt
+brubeck_mysql.egg-info/top_level.txt
+brubeckmysql/__init__.py
+brubeckmysql/base.py
+brubeckmysql/querysets.py
