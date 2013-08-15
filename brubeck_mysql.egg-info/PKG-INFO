@@ -1,7 +1,7 @@
 Metadata-Version: 1.0
 Name: brubeck-mysql
-Version: 0.1.6
-Summary: Brubeck module for MySQL querysets
+Version: 0.2.0
+Summary: Brubeck module for MySQL Querysets using Schematics
 Home-page: http://github.com/sethmurphy/BrubeckMySQL
 Author: Seth Murphy
 Author-email: seth@brooklyncode.com

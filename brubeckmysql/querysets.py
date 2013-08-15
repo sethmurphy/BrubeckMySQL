@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import imp
+import time
 import uuid
+import datetime
 
 import pymysql
 from pymysql.connections import Connection
@@ -16,7 +18,6 @@ from schematics.types import compound as CompoundFields
 from schematics.types import mongo as MongoFields
 from base import create_db_conn_pool
 from base import create_db_conn
-import dictshield
 import schematics
 from gevent.queue import Queue
 
@@ -60,7 +61,7 @@ class MySqlQueryset(object):
 
     # Used to set the format of our returned object
     # FORMAT_DICT is a reasonable default since Brubeck
-    # uses that to create both DictShield objects and JSON responses
+    # uses that to create both Schematic objects and JSON responses
     
     FORMAT_TUPLE = 0
     FORMAT_DICT  = 1
@@ -83,12 +84,12 @@ class MySqlQueryset(object):
             logging.debug("None db_conn passed to queryset __init__t")
 
         # We will need to set these in the entity specific implmentation
-        # Once DictShield has more meta data, this may not be necessary anymore        
+        # Once Schematic has more meta data, this may not be necessary anymore        
         self.table_name = None          # the name of the database table
         self.fields = None              # A list of field names
         if tag is None:
             # We will need to set these in the entity specific implementation
-            # Once DictShield has more meta data, this may not be necessary anymore
+            # Once Schematic has more meta data, this may not be necessary anymore
             self.table_name = None
             self.fields = None
             self.fields_muteable = None
@@ -228,13 +229,19 @@ class MySqlQueryset(object):
 
     def escape_sql(self, sql, args, db_conn):
         # escape sql here so we can debug the real query string
-        logging.debug("escape_sql sql: %s" % sql)
-        logging.debug("escape_sql args: %s" % args)
+        #logging.debug("escape_sql sql: %s" % sql)
+        #logging.debug("escape_sql args: %s" % args)
+        def coerce_value(val):
+            #logging.debug("Coercing value: %s" % val)
+            # convert datetime args to epoch
+            if isinstance(val, datetime.datetime):
+                val = "%s.%s" % (long(time.mktime(val.timetuple())), val.microsecond)
+            return val
         if args is not None:
             if isinstance(args, tuple) or isinstance(args, list):
-                escaped_args = tuple(db_conn.escape(arg) for arg in args)
+                escaped_args = tuple(db_conn.escape(coerce_value(arg)) for arg in args)
             elif isinstance(args, dict):
-                escaped_args = dict((key, db_conn.escape(val)) for (key, val) in args.items())
+                escaped_args = dict((key, db_conn.escape(coerce_value(val))) for (key, val) in args.items())
             else:
                 #If it's not a dictionary let's try escaping it anyways.
                 #Worst case it will throw a Value error
@@ -244,22 +251,26 @@ class MySqlQueryset(object):
             except:
                 raise
                 pass
-        logging.debug(sql)
+        else:
+            # escape just in case for format fields
+            # that should double escape %
+            sql = sql % ()
+        logging.debug("Escaped SQL to execute: %s" % sql)
         return sql
 
     def execute(self, sql, args = None, is_insert = False, is_insert_update = False):
         """performs an insert, update or delete"""
-        logging.debug("execute")
+        #logging.debug("execute")
         
         affected_rows = 0
         inserted_id = None
         
         db_conn = self.get_db_conn()
         cursor = db_conn.cursor()
-        logging.debug("execute args: %s" % args)
+        #logging.debug("execute args: %s" % args)
         sql = self.escape_sql(sql, args, db_conn)
         
-        logging.debug("execute: %s" % sql)
+        #logging.debug("execute: %s" % sql)
         
         try:
             affected_rows = cursor.execute (sql)
@@ -281,16 +292,16 @@ class MySqlQueryset(object):
         """performs a query.
            Defaults to returning a dict object, since that is what a DICT models and JSON need
         """
-        logging.debug("query")
+        #logging.debug("query")
         db_conn = self.get_db_conn()
         sql = self.escape_sql(sql, args, db_conn)
         cursor = None
         rows = None
         if format == self.FORMAT_TUPLE:
-            logging.debug("tuple")
+            #logging.debug("tuple")
             cursor = db_conn.cursor()
         else:
-            logging.debug("dict")
+            #logging.debug("dict")
             cursor = db_conn.cursor(cursors.DictCursor)
         try:
             cursor.execute(sql)
@@ -314,13 +325,16 @@ class MySqlQueryset(object):
 
     def fetch(self, sql, args=None, format=FORMAT_DICT):
         """gets just one item, the first returned"""
-        logging.debug("fetch")
+        #logging.debug("fetch")
         row = self.query(sql, args, format, True)
         if row == None or len(row) == 0:
             return None
         return  row
 
-    def get_fields_list(self, alias = None):
+    def get_select_fields_list(self, alias = None):
+        return self.get_fields_list(alias, 'select')
+        
+    def get_fields_list(self, alias = None, action = None):
         """Creates a MySQL safe list of field names"""
         if self.fields == None:
             raise Exception("attribute fields not set in queryset!")
@@ -332,12 +346,31 @@ class MySqlQueryset(object):
 
         # create a function to wrap and join our field names
         def wrap_and_join(field):
-            return '%s`%s`' % (alias,str(field))
-
+            #logging.debug('field: %s' % field)
+            if isinstance(field, dict):
+                field_name = field['name']
+                if not action is None and action == 'select':
+                    field_alias = field_name
+                    field_format='%s'
+                    if 'alias' in field:
+                        field_alias = field['alias']
+                    if 'read_format' in field:
+                        field_format = field['read_format']
+                    field_name = '%s`%s`' % (alias,str(field_name))
+                    field = '%s as `%s`' % ((field_format % field_name), field_alias)
+                else:
+                    field = field_name
+                    field = '%s`%s`' % (alias,str(field))
+            else:
+                field = '%s`%s`' % (alias,str(field))
+                
+            #logging.debug('return field: %s' % field)
+            return field
             
         # map each item in the list and return us
-        return ','.join(map(wrap_and_join, self.fields))
-
+        fields_list = ','.join(map(wrap_and_join, self.fields))
+        return fields_list
+        
     def get_table_name(self):
         if self.table_name == None:
             raise Exception("attribute table_name not set in queryset!")
@@ -355,22 +388,22 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             self.fields = self.settings["TABLES"][table_tag]["FIELDS"]
             self.fields_muteable = self.settings["TABLES"][table_tag]["FIELDS_MUTEABLE"]
         
-    def dictListToDictShieldList(self, dict_items):
+    def dictListToSchematicList(self, dict_items):
         items = []
         for dict_item in dict_items:
-            items.append(self.DictToDictShield(dict_item))
+            items.append(self.DictToSchematic(dict_item))
         return items
 
-    def resultsTupleToDictShieldList(self, result_tuples):
+    def resultsTupleToSchematicList(self, result_tuples):
         items = []
         for result_tuple in result_tuples:
             if result_tuple[0] == self.MSG_OK:
-                items.append(self.DictToDictShield(result_tuple[1]))
+                items.append(self.DictToSchematic(result_tuple[1]))
         return items
 
-    def DictToDictShield(self, dict_value):
-        """Take a CostTypeQuerySet result dict and return a CostType DictShield"""
-        raise NotImplemented("DictToDictShield(self, dict_value) needed in MySqlApiQueryset.")
+    def DictToSchematic(self, dict_value):
+        """Take a Queryset result dict and return a Schematic"""
+        raise NotImplemented("DictToSchematic(self, dict_value) needed in MySqlApiQueryset.")
 
     def get_values_list(self, shield):
         """Creates a MySQL safe list of field values
@@ -411,17 +444,20 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             raise Exception("attribute fields_muteable not set in queryset!")
         return self._get_fields_equal_values_list(shield, self.fields_muteable)
 
-    def _dictshield_to_mysql_formatter(self, shield, field):
+    def _schematic_to_mysql_formatter(self, shield, field):
         """
         This method returns a string formatter to be used in constructing the
-        sql string to eacape.
+        sql string to escape.
         At the moment it is limited to simple types.
         Complex or container types are not supported.
-        (SEE: https://github.com/j2labs/dictshield/tree/master/docs)
+        (SEE: https://github.com/j2labs/schematic/tree/master/docs)
         """
         string_formatter = u'%s' # this is used for everything (% escapes %)
         #logging.debug("shield._fields %s" % shield._fields)
         #logging.debug("field %s" % field)
+        if isinstance(field, dict):
+            field = field['name']
+
         if field not in shield._fields and field == 'id':
             return string_formatter;
 
@@ -489,7 +525,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             # A whole other entity
             raise Exception("ModelType not Supported")
 
-    def _dictshield_to_mysql_value(self, shield, field):
+    def _schematic_to_mysql_value(self, shield, field):
         """
         This method returns a value that can be stored in the database
         At the moment it is limited to simple types.
@@ -498,6 +534,9 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         field_value = u''
         #logging.debug("shield._fields %s" % shield._fields)
         #logging.debug("field %s" % field)
+        if isinstance(field, dict):
+            field = field['name']
+
         if field not in shield._fields:
             return None;
 
@@ -571,9 +610,23 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         """
         # create a function to wrap and join our field names
         def wrap_and_join(field):
-            return u"%s=%s" % (field, self._dictshield_to_mysql_formatter(shield, field))
+            logging.debug('field: %s' % field)
+            if isinstance(field, dict):
+                field_name = field['name']
+                field_format='%s'
+                # we may need to format our objects value for mysql
+                if 'write_format' in field:
+                    field_write_format = field['write_format']
+                    field_format = self._schematic_to_mysql_formatter(shield, field)
+                field_format_value = field_write_format % field_format
+                return u"%s=%s" % (field_name, field_format_value )
+
+            return u"%s=%s" % (field, self._schematic_to_mysql_formatter(shield, field))
+        
         def get_value(field):
-            val = self._dictshield_to_mysql_value(shield, field)
+            if isinstance(field, dict):
+                field = field['name']
+            val = self._schematic_to_mysql_value(shield, field)
             #if isinstance(val, unicode):
             #    val = val.encode('utf8')
             return val
@@ -634,7 +687,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
 
     def read_all(self, **kw):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
-        return [(self.MSG_OK, datum) for datum in self.query(u"SELECT %s FROM `%s`" % (self.get_fields_list(), table_name))]
+        return [(self.MSG_OK, datum) for datum in self.query(u"SELECT %s FROM `%s`" % (self.get_select_fields_list(), table_name))]
 
     def read_one(self, iid, **kw):
         logging.debug("MySqlApiQueryset read_one")
@@ -642,7 +695,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
          # be pesimistic, alway assume failure
         status = self.MSG_FAILED 
         iid = int(iid)  # id is always an int in MySQL
-        sql = u"SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_fields_list(), table_name)
+        sql = u"SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_select_fields_list(), table_name)
         #logging.debug("sql: %s" % sql)
         item = self.fetch(sql, [iid])
         if item != None:

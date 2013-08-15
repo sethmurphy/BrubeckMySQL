@@ -3,8 +3,8 @@
 from setuptools import setup, find_packages
  
 setup(name='brubeck-mysql',
-      version='0.1.6',
-      description='Brubeck module for MySQL querysets',
+      version='0.2.0',
+      description='Brubeck module for MySQL Querysets using Schematics',
       author='Seth Murphy',
       author_email='seth@brooklyncode.com',
       url='http://github.com/sethmurphy/BrubeckMySQL',
