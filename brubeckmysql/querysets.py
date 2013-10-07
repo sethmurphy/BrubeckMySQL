@@ -69,11 +69,13 @@ class MySqlQueryset(object):
 
     MSG_NOCHANGES  = 'NO CHANGES'
 
-    def __init__(self, settings, db_conn, table_tag, auto_commit = True, **kw):
+    def __init__(self, settings, db_conn, table_tag, auto_commit = None, **kw):
         """load our settings and do minimal config"""
         logging.debug("MySqlQueryset for %s with auto_commit=%s initializing" % 
                       (table_tag, auto_commit))
         self.settings = settings
+        if auto_commit is None:
+            auto_commit = True
         self.auto_commit = auto_commit
         if isinstance(db_conn, Queue):
             self.db_pool = db_conn
@@ -390,6 +392,9 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         """load our settings and do minimal config"""
         logging.debug("MySqlAPIQueryset for %s with auto_commit=%s initializing" %
                       (table_tag, auto_commit))
+        if auto_commit is None:
+            auto_commit = True
+        auto_commit = True
         super(MySqlApiQueryset, self).__init__(settings, db_pool,
                                table_tag, auto_commit)
         self.fields_muteable = None     # A list of field names that can be updated
