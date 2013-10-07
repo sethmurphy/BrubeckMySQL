@@ -62,16 +62,19 @@ class MySqlQueryset(object):
     # Used to set the format of our returned object
     # FORMAT_DICT is a reasonable default since Brubeck
     # uses that to create both Schematic objects and JSON responses
-    
+
     FORMAT_TUPLE = 0
     FORMAT_DICT  = 1
     FORMAT_DICTSHIELD  = 2
 
     MSG_NOCHANGES  = 'NO CHANGES'
 
-    def __init__(self, settings, db_conn, tag, **kw):
+    def __init__(self, settings, db_conn, table_tag, auto_commit = True, **kw):
         """load our settings and do minimal config"""
+        logging.debug("MySqlQueryset for %s with auto_commit=%s initializing" % 
+                      (table_tag, auto_commit))
         self.settings = settings
+        self.auto_commit = auto_commit
         if isinstance(db_conn, Queue):
             self.db_pool = db_conn
             self.db_conn = None
@@ -79,28 +82,23 @@ class MySqlQueryset(object):
             self.db_conn = db_conn
             self.db_pool = None
 
-
         if self.db_pool == None and self.db_conn == None:
             logging.debug("None db_conn passed to queryset __init__t")
 
         # We will need to set these in the entity specific implmentation
-        # Once Schematic has more meta data, this may not be necessary anymore        
+        # Once Schematic has more meta data, this may not be necessary anymore
         self.table_name = None          # the name of the database table
         self.fields = None              # A list of field names
-        if tag is None:
+        if table_tag is None:
             # We will need to set these in the entity specific implementation
             # Once Schematic has more meta data, this may not be necessary anymore
             self.table_name = None
             self.fields = None
             self.fields_muteable = None
         else:
-            self.table_name = self.settings["TABLES"][tag]["TABLE_NAME"]
-            self.fields = self.settings["TABLES"][tag]["FIELDS"]
-            self.fields_muteable = self.settings["TABLES"][tag]["FIELDS_MUTEABLE"]
-
-
-
-
+            self.table_name = self.settings["TABLES"][table_tag]["TABLE_NAME"]
+            self.fields = self.settings["TABLES"][table_tag]["FIELDS"]
+            self.fields_muteable = self.settings["TABLES"][table_tag]["FIELDS_MUTEABLE"]
 
     def set_db_pool(self, db_pool):
         """set our db_pool (gevent.queue.Queue)"""
@@ -119,7 +117,7 @@ class MySqlQueryset(object):
         db_conn = None
         if self.db_conn == None and self.db_pool == None:
             self.init_db_conn()
-        # get a connection        
+        # get a connection
         if not self.db_pool == None:
             # Will block until one becomes available
             db_conn = self.db_pool.get()
@@ -158,6 +156,13 @@ class MySqlQueryset(object):
                     logging.debug("error creating db_conn to replace bad")
                     raise
         return db_conn
+
+    def commit(self):
+        """commits any uncommited transactions"""
+        try:
+            self.get_db_conn().commit()
+        except Exception as e:
+            pass
 
     def return_db_conn(self, db_conn):
         """Puts a connection back in the pool.
@@ -258,27 +263,28 @@ class MySqlQueryset(object):
         logging.debug("Escaped SQL to execute: %s" % sql)
         return sql
 
-    def execute(self, sql, args = None, is_insert = False, is_insert_update = False):
+    def execute(self, sql, args = None, is_insert = False,
+                is_insert_update = False, commit = None):
         """performs an insert, update or delete"""
+        if commit is None:
+            commit = self.auto_commit
         #logging.debug("execute")
-        
         affected_rows = 0
         inserted_id = None
-        
         db_conn = self.get_db_conn()
         cursor = db_conn.cursor()
         #logging.debug("execute args: %s" % args)
         sql = self.escape_sql(sql, args, db_conn)
-        
         #logging.debug("execute: %s" % sql)
-        
         try:
             affected_rows = cursor.execute (sql)
             if (is_insert or is_insert_update) and affected_rows == 1:
-                inserted_id = cursor.lastrowid    
-            db_conn.commit()
+                inserted_id = cursor.lastrowid
+                if commit == True:
+                    db_conn.commit()
         except:
-            db_conn.rollback()
+            if commit == True:
+                db_conn.rollback()
             raise
         finally:
             if cursor is not None:
@@ -318,8 +324,9 @@ class MySqlQueryset(object):
         finally:
             if cursor is not None:
                 cursor.close()
-            if db_conn is not None:
-                db_conn.commit()
+            #why commit a query?
+            #if db_conn is not None:
+            #    db_conn.commit()
             self.return_db_conn(db_conn)
         return rows
 
@@ -333,7 +340,7 @@ class MySqlQueryset(object):
 
     def get_select_fields_list(self, alias = None):
         return self.get_fields_list(alias, 'select')
-        
+
     def get_fields_list(self, alias = None, action = None):
         """Creates a MySQL safe list of field names"""
         if self.fields == None:
@@ -363,14 +370,14 @@ class MySqlQueryset(object):
                     field = '%s`%s`' % (alias,str(field))
             else:
                 field = '%s`%s`' % (alias,str(field))
-                
+
             #logging.debug('return field: %s' % field)
             return field
-            
+
         # map each item in the list and return us
         fields_list = ','.join(map(wrap_and_join, self.fields))
         return fields_list
-        
+
     def get_table_name(self):
         if self.table_name == None:
             raise Exception("attribute table_name not set in queryset!")
@@ -379,15 +386,19 @@ class MySqlQueryset(object):
 class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     """implement all our auto API functions mixin for MySql backed Queryset objects"""
 
-    def __init__(self, settings, db_pool, table_tag = None):
-        super(MySqlApiQueryset, self).__init__(settings, db_pool, table_tag)
+    def __init__(self, settings, db_pool, table_tag = None, auto_commit = None):
+        """load our settings and do minimal config"""
+        logging.debug("MySqlAPIQueryset for %s with auto_commit=%s initializing" %
+                      (table_tag, auto_commit))
+        super(MySqlApiQueryset, self).__init__(settings, db_pool,
+                               table_tag, auto_commit)
         self.fields_muteable = None     # A list of field names that can be updated
 
         if table_tag is not None:
             self.table_name = self.settings["TABLES"][table_tag]["TABLE_NAME"]
             self.fields = self.settings["TABLES"][table_tag]["FIELDS"]
             self.fields_muteable = self.settings["TABLES"][table_tag]["FIELDS_MUTEABLE"]
-        
+
     def dictListToSchematicList(self, dict_items):
         items = []
         for dict_item in dict_items:
@@ -622,7 +633,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
                 return u"%s=%s" % (field_name, field_format_value )
 
             return u"%s=%s" % (field, self._schematic_to_mysql_formatter(shield, field))
-        
+
         def get_value(field):
             if isinstance(field, dict):
                 field = field['name']
@@ -640,29 +651,33 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
     ###
     ## Create Functions
 
-    def create_one(self, shield, **kw):
+    def create_one(self, shield, commit = None, **kw):
         logging.debug("MySqlApiQueryset create_one")
+        if commit is None:
+            commit = self.auto_commit
         # be pesimistic, alway assume failure
-        status = self.MSG_FAILED 
+        status = self.MSG_FAILED
         # check for our optional table_name argument
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         insert_info = self.get_insert_fields_equal_values_list(shield)
         update_info = self.get_update_fields_equal_values_list(shield)
         if update_info[0] == '':
             sql = u"""
-                INSERT INTO `%s` 
-                set %s 
+                INSERT INTO `%s`
+                set %s
                 """ % (table_name, insert_info[0])
         else:
             sql = u"""
-                INSERT INTO `%s` 
-                set %s 
+                INSERT INTO `%s`
+                set %s
                 ON DUPLICATE KEY UPDATE
                 %s
                 """ % (table_name, insert_info[0], update_info[0])
         logging.debug("MySqlApiQueryset create_one sql: %s" % sql)
-        (affected_rows, inserted_id) = self.execute(sql, 
-            insert_info[1] + update_info[1], is_insert_update = True )
+        (affected_rows, inserted_id) = self.execute(sql,
+            insert_info[1] + update_info[1],
+            is_insert = True, is_insert_update = True,
+            commit = commit )
         if affected_rows == 1:
             status = self.MSG_CREATED
         elif affected_rows == 2:
@@ -693,7 +708,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         logging.debug("MySqlApiQueryset read_one")
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
          # be pesimistic, alway assume failure
-        status = self.MSG_FAILED 
+        status = self.MSG_FAILED
         iid = int(iid)  # id is always an int in MySQL
         sql = u"SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_select_fields_list(), table_name)
         #logging.debug("sql: %s" % sql)
@@ -711,17 +726,21 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
 
     ## Update Functions
 
-    def update_one(self, shield, **kw):
+    def update_one(self, shield, commit = None, **kw):
         logging.debug("MySqlApiQueryset update_one")
+        if commit is None:
+            commit = self.auto_commit
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         # be pesimistic, alway assume failure
-        status = self.MSG_FAILED 
+        status = self.MSG_FAILED
         sql = u"""
-            UPDATE `%s` 
+            UPDATE `%s`
             SET %S
             WHERE id = %%s
         """ % (table_name, self.get_fields_equal_values_list(shield))
-        if self.execute(sql, tuple(shield.id)):
+        if self.execute(sql, tuple(shield.id),
+                        is_insert = False, is_insert_update = False,
+                        commit = commit):
             status = self.MSG_CREATED
         return (status, shield)
 
@@ -732,26 +751,30 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
 
     ## Destroy Functions
 
-    def destroy_one(self, iid, **kw):
+    def destroy_one(self, iid, commit = None, **kw):
         logging.debug("MySqlApiQueryset destroy_one")
+        if commit is None:
+            commit = self.auto_commit
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
         # be pesimistic, alway assume failure
-        status = self.MSG_FAILED 
+        status = self.MSG_FAILED
         iid = int(iid)  # id is always an int in MySQL
         try:
             sql = u"""
                 DELETE FROM `%s`
                 WHERE id = %%s LIMIT 1
             """ % (table_name)
-            if self.execute(sql, [iid]):
+            if self.execute(sql, [iid],
+                            is_insert = False, is_insert_update = False,
+                            commit = commit):
                 return (self.MSG_UPDATED, iid)
         except KeyError:
             raise FourOhFourException
         return (status, iid)
 
-    def destroy_many(self, ids, **kw):
+    def destroy_many(self, ids, commit = None, **kw):
         table_name = self.table_name if not 'table_name' in kw else kw['table_name']
-        statuses = [self.destroy_one(iid, table_name=table_name) for iid in ids]
+        statuses = [self.destroy_one(iid, table_name=table_name, commit=commit) for iid in ids]
         return statuses
 
     ###
