@@ -282,8 +282,8 @@ class MySqlQueryset(object):
             affected_rows = cursor.execute (sql)
             if (is_insert or is_insert_update) and affected_rows == 1:
                 inserted_id = cursor.lastrowid
-                if commit == True:
-                    db_conn.commit()
+            if affected_rows > 0 and commit == True:
+                db_conn.commit()
         except:
             if commit == True:
                 db_conn.rollback()
@@ -394,7 +394,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
                       (table_tag, auto_commit))
         if auto_commit is None:
             auto_commit = True
-        auto_commit = True
+        self.auto_commit = auto_commit
         super(MySqlApiQueryset, self).__init__(settings, db_pool,
                                table_tag, auto_commit)
         self.fields_muteable = None     # A list of field names that can be updated
