@@ -282,7 +282,7 @@ class MySqlQueryset(object):
             affected_rows = cursor.execute (sql)
             if (is_insert or is_insert_update) and affected_rows == 1:
                 inserted_id = cursor.lastrowid
-            if affected_rows > 0 and commit == True:
+            if commit == True:
                 db_conn.commit()
         except:
             if commit == True:
