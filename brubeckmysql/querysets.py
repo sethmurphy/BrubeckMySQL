@@ -84,7 +84,7 @@ class MySqlQueryset(object):
             self.db_conn = db_conn
             self.db_pool = None
 
-        if self.db_pool == None and self.db_conn == None:
+        if self.db_pool is None and self.db_conn is None:
             logging.debug("None db_conn passed to queryset __init__t")
 
         # We will need to set these in the entity specific implmentation
@@ -117,17 +117,21 @@ class MySqlQueryset(object):
     def get_db_conn(self):
         """Make sure we have a db connection, and return it"""
         db_conn = None
-        if self.db_conn == None and self.db_pool == None:
+        if self.db_conn is None and self.db_pool is None:
+            logging.debug('MySqlQueryset get_db_conn db_conn and db_pool is None')
             self.init_db_conn()
         # get a connection
-        if not self.db_pool == None:
-            # Will block until one becomes available
-            db_conn = self.db_pool.get()
-        elif not self.db_conn == None:
-            # not using pooling
+        if not self.db_conn is None:
+            # not using pooling, or 
+            # we already got our connection from pool earlier
+            logging.debug('MySqlQueryset get_db_conn returning existing db_conn')
             db_conn = self.db_conn
+        elif not self.db_pool is None:
+            # Will block until one becomes available
+            logging.debug('MySqlQueryset get_db_conn getting db_conn from pool')
+            db_conn = self.db_pool.get()
 
-        if not db_conn == None:
+        if not db_conn is None:
             # try to avoid broken pipe error
             try:
                 db_conn.ping()
@@ -171,7 +175,7 @@ class MySqlQueryset(object):
         Relies on gevent (db_pool is a Queue).
         Does nothing if we have no db_pool.
         """
-        if not self.db_pool == None:
+        if not self.db_pool is None:
             self.db_pool.put_nowait(db_conn)
 
     def init_db_pool(self, pool_size=10):
@@ -181,7 +185,7 @@ class MySqlQueryset(object):
         logging.debug("init_db_pool")
         try:
             # Only create it if it doesn't exist
-            if self.db_conn == None and self.db_pool == None:
+            if self.db_conn is None and self.db_pool is None:
                 logging.debug("need to create new db_pool")
                 self.db_pool = gevent.queue.Queue() 
                 for i in range(pool_size): 
@@ -198,7 +202,7 @@ class MySqlQueryset(object):
         logging.debug("init_db_conn")
         try:
             # Only create it if it doesn't exist
-            if self.db_conn == None and self.db_pool == None:
+            if self.db_conn is None and self.db_pool is None:
                 logging.debug("need to create new db_conn")
                 self.db_conn = create_db_conn(self.settings)
             else:
@@ -230,7 +234,7 @@ class MySqlQueryset(object):
             if cursor is not None:
                 cursor.close()
             self.return_db_conn(db_conn)
-        if row == None or row[0] == 0:
+        if row is None or row[0] == 0:
             return False
         return True
 
@@ -336,7 +340,7 @@ class MySqlQueryset(object):
         """gets just one item, the first returned"""
         #logging.debug("fetch")
         row = self.query(sql, args, format, True)
-        if row == None or len(row) == 0:
+        if row is None or len(row) == 0:
             return None
         return  row
 
@@ -345,7 +349,7 @@ class MySqlQueryset(object):
 
     def get_fields_list(self, alias = None, action = None):
         """Creates a MySQL safe list of field names"""
-        if self.fields == None:
+        if self.fields is None:
             raise Exception("attribute fields not set in queryset!")
 
         if alias is not None:
@@ -381,7 +385,7 @@ class MySqlQueryset(object):
         return fields_list
 
     def get_table_name(self):
-        if self.table_name == None:
+        if self.table_name is None:
             raise Exception("attribute table_name not set in queryset!")
 
 
@@ -426,13 +430,13 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             1. The format string for the sql
             2. A list of the values themselves
         """
-        if self.fields == None:
+        if self.fields is None:
             raise Exception("attribute fields not set in queryset!")
         # create a function to wrap and join our field names
         def wrap_and_join(field):
             # if we are not a number field, wrap us in quotes
             f = getattr(shield, field)
-            if f != None and f._jsonschema_type() == 'string':
+            if not f is None and f._jsonschema_type() == 'string':
                 return u"'%s'" % field
             return str(field)
         def get_value(field):
@@ -446,7 +450,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             1. The format string for the sql
             2. A list of the values themselves
         """
-        if self.fields == None:
+        if self.fields is None:
             raise Exception("attribute fields not set in queryset!")
         return self._get_fields_equal_values_list(shield, self.fields)
 
@@ -456,7 +460,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
             1. The format string for the sql
             2. A list of the values themselves
         """
-        if self.fields_muteable == None:
+        if self.fields_muteable is None:
             raise Exception("attribute fields_muteable not set in queryset!")
         return self._get_fields_equal_values_list(shield, self.fields_muteable)
 
@@ -693,7 +697,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
                 status = self.MSG_NOCHANGES
 
         logging.debug("MySqlApiQueryset create_one (status, affected_rows): (%s, %s)" % (status, affected_rows))
-        if inserted_id != None:
+        if not inserted_id is None:
             shield.id = inserted_id
             logging.debug("inserted_id: %s)" % (inserted_id))
         return (status, shield)
@@ -718,7 +722,7 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         sql = u"SELECT %s FROM `%s` WHERE ID = %%s" % (self.get_select_fields_list(), table_name)
         #logging.debug("sql: %s" % sql)
         item = self.fetch(sql, [iid])
-        if item != None:
+        if not item is None:
             return (self.MSG_OK, item)
         return (status, iid)
 
