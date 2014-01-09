@@ -73,6 +73,8 @@ class MySqlQueryset(object):
         """load our settings and do minimal config"""
         logging.debug("MySqlQueryset for %s with auto_commit=%s initializing" % 
                       (table_tag, auto_commit))
+        logging.debug("MySqlQueryset db_conn=%s (%s)" %
+                      (db_conn, db_conn.__class__ if not db_conn is None else 'None'))
         self.settings = settings
         if auto_commit is None:
             auto_commit = True
@@ -300,7 +302,7 @@ class MySqlQueryset(object):
             return (affected_rows, inserted_id)
         return affected_rows
 
-    def query(self, sql, args=None, format=FORMAT_DICT, fetch_one=False):
+    def query(self, sql, args=None, format=FORMAT_DICT, fetch_one=False, include_field_names=False):
         """performs a query.
            Defaults to returning a dict object, since that is what a DICT models and JSON need
         """
@@ -309,11 +311,10 @@ class MySqlQueryset(object):
         sql = self.escape_sql(sql, args, db_conn)
         cursor = None
         rows = None
+        field_names = None
         if format == self.FORMAT_TUPLE:
-            #logging.debug("tuple")
             cursor = db_conn.cursor()
         else:
-            #logging.debug("dict")
             cursor = db_conn.cursor(cursors.DictCursor)
         try:
             cursor.execute(sql)
@@ -323,18 +324,20 @@ class MySqlQueryset(object):
             else:
                 logging.debug("fetch_all")
                 rows = cursor.fetchall()
-            logging.debug("db_conn:%s" % db_conn)
+            logging.debug("query db_conn:%s" % db_conn)
+            if include_field_names:
+                field_names = cursor._fields
         except:
             logging.debug("ERROR!!!!!!!!!")
             raise
         finally:
             if cursor is not None:
                 cursor.close()
-            #why commit a query?
-            #if db_conn is not None:
-            #    db_conn.commit()
             self.return_db_conn(db_conn)
-        return rows
+        if field_names:
+            return (rows, field_names)
+        else:
+            return rows
 
     def fetch(self, sql, args=None, format=FORMAT_DICT):
         """gets just one item, the first returned"""
@@ -396,6 +399,8 @@ class MySqlApiQueryset(MySqlQueryset, AbstractQueryset):
         """load our settings and do minimal config"""
         logging.debug("MySqlAPIQueryset for %s with auto_commit=%s initializing" %
                       (table_tag, auto_commit))
+        logging.debug("MySqlAPIQueryset db_pool=%s (%s)" %
+                      (db_pool, db_pool.__class__ if not db_pool is None else 'None'))
         if auto_commit is None:
             auto_commit = True
         self.auto_commit = auto_commit
