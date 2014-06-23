@@ -71,9 +71,9 @@ class MySqlQueryset(object):
 
     def __init__(self, settings, db_conn, table_tag, auto_commit = None, **kw):
         """load our settings and do minimal config"""
-        logging.debug("MySqlQueryset for %s with auto_commit=%s initializing" % 
+        logging.debug("MySqlQueryset __init__ for %s with auto_commit=%s initializing" %
                       (table_tag, auto_commit))
-        logging.debug("MySqlQueryset db_conn=%s (%s)" %
+        logging.debug("MySqlQueryset __init__ db_conn=%s (%s)" %
                       (db_conn, db_conn.__class__ if not db_conn is None else 'None'))
         self.settings = settings
         if auto_commit is None:
@@ -104,6 +104,9 @@ class MySqlQueryset(object):
             self.fields = self.settings["TABLES"][table_tag]["FIELDS"]
             self.fields_muteable = self.settings["TABLES"][table_tag]["FIELDS_MUTEABLE"]
 
+        logging.debug("MySqlQueryset __init__ table_name=%s, fields=%s, fields_muteable=%s" %
+                      (self.table_name, self.fields, self.fields_mutable))
+
     def set_db_pool(self, db_pool):
         """set our db_pool (gevent.queue.Queue)"""
         self.db_pool = db_pool
@@ -124,7 +127,7 @@ class MySqlQueryset(object):
             self.init_db_conn()
         # get a connection
         if not self.db_conn is None:
-            # not using pooling, or 
+            # not using pooling, or
             # we already got our connection from pool earlier
             logging.debug('MySqlQueryset get_db_conn returning existing db_conn')
             db_conn = self.db_conn
@@ -149,7 +152,7 @@ class MySqlQueryset(object):
                 db_conn = None
                 try:
                     ## create our mySql connection
-                    ## this connection just takes 
+                    ## this connection just takes
                     ## the old connections place in the queue
                     db_conn = pymysql.connect(
                         host = self.settings["CONNECTION"]["HOST"],
@@ -189,9 +192,9 @@ class MySqlQueryset(object):
             # Only create it if it doesn't exist
             if self.db_conn is None and self.db_pool is None:
                 logging.debug("need to create new db_pool")
-                self.db_pool = gevent.queue.Queue() 
-                for i in range(pool_size): 
-                    self.db_pool.put_nowait(create_db_conn(self.settings)) 
+                self.db_pool = gevent.queue.Queue()
+                for i in range(pool_size):
+                    self.db_pool.put_nowait(create_db_conn(self.settings))
             else:
                 logging.debug("NOT creating db_pool")
         except Exception:
