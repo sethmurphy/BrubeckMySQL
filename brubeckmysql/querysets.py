@@ -105,7 +105,7 @@ class MySqlQueryset(object):
             self.fields_muteable = self.settings["TABLES"][table_tag]["FIELDS_MUTEABLE"]
 
         logging.debug("MySqlQueryset __init__ table_name=%s, fields=%s, fields_muteable=%s" %
-                      (self.table_name, self.fields, self.fields_mutable))
+                      (self.table_name, self.fields, self.fields_muteable))
 
     def set_db_pool(self, db_pool):
         """set our db_pool (gevent.queue.Queue)"""
