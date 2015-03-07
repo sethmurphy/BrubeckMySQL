@@ -12,7 +12,7 @@ import logging
 ##
 ## Here are the example settings for creating the connection
 ##
-""" 
+"""
 mysql = {
     "CONNECTION": {
         "HOST": "127.0.0.1",               ## MySQL Host
@@ -33,6 +33,16 @@ def create_db_conn(settings):
         # logging.debug("creating db_conn")
         ## create our mySql connection
         coll = settings["CONNECTION"]["COLLATION"]
+        ssl=None
+        if "SSL" in settings["CONNECTION"]:
+            ssl = {}
+            if "KEY" in settings["CONNECTION"]["SSL"]:
+                ssl["key"] = settings["CONNECTION"]["SSL"]["KEY"]
+            if "CERT" in settings["CONNECTION"]["SSL"]:
+                ssl["cert"] = settings["CONNECTION"]["SSL"]["CERT"]
+            if "CA" in settings["CONNECTION"]["SSL"]:
+                ssl["ca"] = settings["CONNECTION"]["SSL"]["CA"]
+
         db_conn = pymysql.connect(
             host        =settings["CONNECTION"]["HOST"],
             port        =settings["CONNECTION"]["PORT"],
@@ -40,6 +50,7 @@ def create_db_conn(settings):
             passwd      =settings["CONNECTION"]["PASSWORD"],
             db          =settings["CONNECTION"]["DATABASE"],
             charset     =settings["CONNECTION"]["COLLATION"],
+            ssl         =ssl,
             use_unicode = True if coll == "utf8" else False,
         );
 
@@ -55,7 +66,7 @@ def create_db_conn(settings):
                 if cursor is not None:
                     cursor.close()
                     db_conn.commit()
-                    
+
         logging.debug("created db_conn")
 
     except Exception:
@@ -67,7 +78,7 @@ def create_db_conn_pool(settings, pool_size=10):
     """create our MySQL connection"""
     logging.debug("create_db_conn_pool")
     self.db_conn = gevent.queue.Queue()
-    for i in range(pool_size): 
+    for i in range(pool_size):
         db_conn = None
         try:
             # Only create it if it doesn't exist
@@ -81,7 +92,7 @@ def create_db_conn_pool(settings, pool_size=10):
                 db      =settings["CONNECTION"]["DATABASE"]
             );
             logging.debug("created db_conn %s" % i)
-            self.db_conn.put_nowait(db_conn) 
+            self.db_conn.put_nowait(db_conn)
             logging.debug("added db_conn %s to pool" % i)
         except Exception:
             logging.debug("error creating db_conn")
